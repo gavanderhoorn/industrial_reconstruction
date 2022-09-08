@@ -43,6 +43,7 @@ def filterNormals(mesh, direction, angle):
 class IndustrialReconstruction(object):
 
     def __init__(self):
+        rospy.loginfo("init start")
 
         self.bridge = CvBridge()
 
@@ -130,6 +131,8 @@ class IndustrialReconstruction(object):
                                                self.stopReconstructionCallback)
 
         self.tsdf_volume_pub = rospy.Publisher("tsdf_volume", Marker, queue_size=10)
+
+        rospy.loginfo("init complete")
 
     def archiveData(self, path_output):
         path_depth = join(path_output, "depth")
