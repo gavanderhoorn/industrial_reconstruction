@@ -13,8 +13,7 @@
 # limitations under the License.
 
 import sys
-import rclpy
-from rclpy.node import Node
+import rospy
 from tf2_ros.buffer import Buffer
 from tf2_ros import TransformListener
 import open3d as o3d
@@ -24,10 +23,10 @@ from pyquaternion import Quaternion
 from collections import deque
 from os.path import exists, join, isfile
 from sensor_msgs.msg import Image, CameraInfo
-from message_filters import ApproximateTimeSynchronizer, Subscriber
-from src.industrial_reconstruction.utility.file import make_clean_folder, write_pose, read_pose, save_intrinsic_as_json, make_folder_keep_contents
+import message_filters
+from industrial_reconstruction.utility.file import make_clean_folder, write_pose, read_pose, save_intrinsic_as_json, make_folder_keep_contents
 from industrial_reconstruction_msgs.srv import StartReconstruction, StopReconstruction
-from src.industrial_reconstruction.utility.ros import getIntrinsicsFromMsg, meshToRos, transformStampedToVectors
+from industrial_reconstruction.utility.ros import getIntrinsicsFromMsg, meshToRos, transformStampedToVectors
 
 # ROS Image message -> OpenCV2 image converter
 from cv_bridge import CvBridge, CvBridgeError
@@ -41,15 +40,14 @@ def filterNormals(mesh, direction, angle):
    mesh.remove_triangles_by_mask(dot_prods < np.cos(angle))
    return mesh
 
-class IndustrialReconstruction(Node):
+class IndustrialReconstruction(object):
 
     def __init__(self):
-        super().__init__('industrial_reconstruction')
 
         self.bridge = CvBridge()
 
         self.buffer = Buffer()
-        self.tf_listener = TransformListener(buffer=self.buffer, node=self)
+        self.tf_listener = TransformListener(buffer=self.buffer)
 
         self.tsdf_volume = None
         self.intrinsics = None
@@ -90,54 +88,48 @@ class IndustrialReconstruction(Node):
         self.processed_frame_count = 0
         self.reconstructed_frame_count = 0
 
-        self.declare_parameter("depth_image_topic")
-        self.declare_parameter("color_image_topic")
-        self.declare_parameter("camera_info_topic")
-        self.declare_parameter("cache_count", 10)
-        self.declare_parameter("slop", 0.01)
+        if not rospy.has_param('~depth_image_topic'):
+            rospy.logerr("Failed to load depth_image_topic parameter")
+        self.depth_image_topic = rospy.get_param('~depth_image_topic')
 
-        try:
-            self.depth_image_topic = str(self.get_parameter('depth_image_topic').value)
-        except:
-            self.get_logger().error("Failed to load depth_image_topic parameter")
-        try:
-            self.color_image_topic = str(self.get_parameter('color_image_topic').value)
-        except:
-            self.get_logger().error("Failed to load color_image_topic parameter")
-        try:
-            self.camera_info_topic = str(self.get_parameter('camera_info_topic').value)
-        except:
-            self.get_logger().error("Failed to load camera_info_topic parameter")
-        try:
-            self.cache_count = int(self.get_parameter('cache_count').value)
-        except:
-            self.get_logger().info("Failed to load cache_count parameter")
-        try:
-            self.slop = float(self.get_parameter('slop').value)
-        except:
-            self.get_logger().info("Failed to load slop parameter")
+        if not rospy.has_param('~color_image_topic'):
+            rospy.logerr("Failed to load color_image_topic parameter")
+        self.color_image_topic = rospy.get_param('~color_image_topic')
+
+        if not rospy.has_param('~camera_info_topic'):
+            rospy.logerr("Failed to load camera_info_topic parameter")
+        self.camera_info_topic = rospy.get_param('~camera_info_topic')
+
+        if not rospy.has_param('~cache_count'):
+            rospy.loginfo("Failed to load cache_count parameter")
+        self.cache_count = int(rospy.get_param('~cache_count'))
+
+        if not rospy.has_param('~slop'):
+            rospy.loginfo("Failed to load slop parameter")
+        self.slop = float(rospy.get_param('~slop'))
+
         allow_headerless = False
 
-        self.get_logger().info("depth_image_topic - " + self.depth_image_topic)
-        self.get_logger().info("color_image_topic - " + self.color_image_topic)
-        self.get_logger().info("camera_info_topic - " + self.camera_info_topic)
+        rospy.loginfo("depth_image_topic - " + self.depth_image_topic)
+        rospy.loginfo("color_image_topic - " + self.color_image_topic)
+        rospy.loginfo("camera_info_topic - " + self.camera_info_topic)
 
-        self.depth_sub = Subscriber(self, Image, self.depth_image_topic)
-        self.color_sub = Subscriber(self, Image, self.color_image_topic)
-        self.tss = ApproximateTimeSynchronizer([self.depth_sub, self.color_sub], self.cache_count, self.slop,
+        self.depth_sub = message_filters.Subscriber(self.depth_image_topic, Image)
+        self.color_sub = message_filters.Subscriber(self.color_image_topic, Image)
+        self.tss = message_filters.ApproximateTimeSynchronizer([self.depth_sub, self.color_sub], self.cache_count, self.slop,
                                                allow_headerless)
         self.tss.registerCallback(self.cameraCallback)
 
-        self.info_sub = self.create_subscription(CameraInfo, self.camera_info_topic, self.cameraInfoCallback, 10)
+        self.info_sub = rospy.Subscriber(self.camera_info_topic, CameraInfo, self.cameraInfoCallback, queue_size=10)
 
-        self.mesh_pub = self.create_publisher(Marker, "industrial_reconstruction_mesh", 10)
+        self.mesh_pub = rospy.Publisher("industrial_reconstruction_mesh", Marker, queue_size=10)
 
-        self.start_server = self.create_service(StartReconstruction, 'start_reconstruction',
+        self.start_server = rospy.Service('start_reconstruction', StartReconstruction,
                                                 self.startReconstructionCallback)
-        self.stop_server = self.create_service(StopReconstruction, 'stop_reconstruction',
+        self.stop_server = rospy.Service('stop_reconstruction', StopReconstruction,
                                                self.stopReconstructionCallback)
 
-        self.tsdf_volume_pub = self.create_publisher(Marker, "tsdf_volume", 10)
+        self.tsdf_volume_pub = rospy.Publisher("tsdf_volume", Marker, queue_size=10)
 
     def archiveData(self, path_output):
         path_depth = join(path_output, "depth")
@@ -158,7 +150,7 @@ class IndustrialReconstruction(Node):
 
 
     def startReconstructionCallback(self, req, res):
-        self.get_logger().info(" Start Reconstruction")
+        rospy.loginfo(" Start Reconstruction")
 
         self.color_images.clear()
         self.depth_images.clear()
@@ -225,13 +217,13 @@ class IndustrialReconstruction(Node):
         return res
 
     def stopReconstructionCallback(self, req, res):
-        self.get_logger().info("Stop Reconstruction")
+        rospy.loginfo("Stop Reconstruction")
         self.record = False
 
         while not self.integration_done:
             self.create_rate(1).sleep()
 
-        self.get_logger().info("Generating mesh")
+        rospy.loginfo("Generating mesh")
         if self.tsdf_volume is None:
             res.success = False
             return res
@@ -268,15 +260,15 @@ class IndustrialReconstruction(Node):
         mesh_msg.header.stamp = self.get_clock().now().to_msg()
         mesh_msg.header.frame_id = self.relative_frame
         self.mesh_pub.publish(mesh_msg)
-        self.get_logger().info("Mesh Saved to " + req.mesh_filepath)
+        rospy.loginfo("Mesh Saved to " + req.mesh_filepath)
 
         if (req.archive_directory != ""):
-            self.get_logger().info("Archiving data to " + req.archive_directory)
+            rospy.loginfo("Archiving data to " + req.archive_directory)
             self.archiveData(req.archive_directory)
             archive_mesh_filepath = join(req.archive_directory, "integrated.ply")
             o3d.io.write_triangle_mesh(archive_mesh_filepath, mesh, False, True)
 
-        self.get_logger().info("DONE")
+        rospy.loginfo("DONE")
         res.success = True
         return res
 
@@ -288,7 +280,7 @@ class IndustrialReconstruction(Node):
                 cv2_depth_img = self.bridge.imgmsg_to_cv2(depth_image_msg, "16UC1")
                 cv2_rgb_img = self.bridge.imgmsg_to_cv2(rgb_image_msg, rgb_image_msg.encoding)
             except CvBridgeError:
-                self.get_logger().error("Error converting ros msg to cv img")
+                rospy.logerr("Error converting ros msg to cv img")
                 return
             else:
                 self.sensor_data.append(
@@ -298,7 +290,7 @@ class IndustrialReconstruction(Node):
                     try:
                         gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, data[2])
                     except Exception as e:
-                        self.get_logger().error("Failed to get transform: " + str(e))
+                        rospy.logerr("Failed to get transform: " + str(e))
 
                         return
                     rgb_t, rgb_r = transformStampedToVectors(gm_tf_stamped)
@@ -338,7 +330,7 @@ class IndustrialReconstruction(Node):
                                     mesh_msg.header.frame_id = self.relative_frame
                                     self.mesh_pub.publish(mesh_msg)
                             except:
-                                self.get_logger().error("Error processing images into tsdf")
+                                rospy.logerr("Error processing images into tsdf")
                                 self.integration_done = True
                                 return
                         else:
@@ -351,9 +343,11 @@ class IndustrialReconstruction(Node):
         self.intrinsics = getIntrinsicsFromMsg(camera_info)
 
 
-def main(args=None):
-    rclpy.init(args=args)
+def main():
+    rospy.init_node('industrial_reconstruction')
     industrial_reconstruction = IndustrialReconstruction()
-    rclpy.spin(industrial_reconstruction)
-    industrial_reconstruction.destroy_node()
-    rclpy.shutdown()
+    rospy.spin()
+
+
+if __name__ == '__main__':
+    main()
