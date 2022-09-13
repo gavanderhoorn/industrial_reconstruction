@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import cv2
 import sys
 import rospy
 from tf2_ros.buffer import Buffer
@@ -25,7 +26,7 @@ from os.path import exists, join, isfile
 from sensor_msgs.msg import Image, CameraInfo
 import message_filters
 from industrial_reconstruction.utility.file import make_clean_folder, write_pose, read_pose, save_intrinsic_as_json, make_folder_keep_contents
-from industrial_reconstruction_msgs.srv import StartReconstruction, StopReconstruction
+from industrial_reconstruction_msgs.srv import StartReconstruction, StopReconstruction, StartReconstructionResponse, StopReconstructionResponse
 from industrial_reconstruction.utility.ros import getIntrinsicsFromMsg, meshToRos, transformStampedToVectors
 
 # ROS Image message -> OpenCV2 image converter
@@ -152,7 +153,7 @@ class IndustrialReconstruction(object):
             save_intrinsic_as_json(join(path_output, "camera_intrinsic.json"), self.intrinsics)
 
 
-    def startReconstructionCallback(self, req, res):
+    def startReconstructionCallback(self, req):
         rospy.loginfo(" Start Reconstruction")
 
         self.color_images.clear()
@@ -216,12 +217,15 @@ class IndustrialReconstruction(object):
         self.live_integration = req.live
         self.record = True
 
+        res = StartReconstructionResponse()
+
         res.success = True
         return res
 
-    def stopReconstructionCallback(self, req, res):
+    def stopReconstructionCallback(self, req):
         rospy.loginfo("Stop Reconstruction")
         self.record = False
+        res = StopReconstructionResponse()
 
         while not self.integration_done:
             self.create_rate(1).sleep()
@@ -260,7 +264,7 @@ class IndustrialReconstruction(object):
 
         o3d.io.write_triangle_mesh(req.mesh_filepath, cropped_mesh, False, True)
         mesh_msg = meshToRos(cropped_mesh)
-        mesh_msg.header.stamp = self.get_clock().now().to_msg()
+        mesh_msg.header.stamp = rospy.Time.now()
         mesh_msg.header.frame_id = self.relative_frame
         self.mesh_pub.publish(mesh_msg)
         rospy.loginfo("Mesh Saved to " + req.mesh_filepath)
@@ -280,8 +284,14 @@ class IndustrialReconstruction(object):
             try:
                 # Convert your ROS Image message to OpenCV2
                 # TODO: Generalize image type
+                # If your camera generates depth images with 32FC1 encoding please check the convert_metric nodelet in depth_image_proc
                 cv2_depth_img = self.bridge.imgmsg_to_cv2(depth_image_msg, "16UC1")
                 cv2_rgb_img = self.bridge.imgmsg_to_cv2(rgb_image_msg, rgb_image_msg.encoding)
+                # If your camera generated colour images with rgba encoding, you want to convert it to rgb
+                if(rgb_image_msg.encoding == "rgba8"):
+                    cv2_rgb_img = cv2.cvtColor(cv2_rgb_img, cv2.COLOR_RGBA2RGB)
+
+
             except CvBridgeError:
                 rospy.logerr("Error converting ros msg to cv img")
                 return
@@ -329,7 +339,7 @@ class IndustrialReconstruction(object):
                                     else:
                                         cropped_mesh = mesh
                                     mesh_msg = meshToRos(cropped_mesh)
-                                    mesh_msg.header.stamp = self.get_clock().now().to_msg()
+                                    mesh_msg.header.stamp = rospy.Time.now()
                                     mesh_msg.header.frame_id = self.relative_frame
                                     self.mesh_pub.publish(mesh_msg)
                             except:
