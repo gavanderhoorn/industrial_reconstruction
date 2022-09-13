@@ -28,8 +28,8 @@ def save_camera_info_intrinsic_as_json(filename, camera_info_msg):
                 'height':
                     camera_info_msg.height,
                 'intrinsic_matrix': [
-                    camera_info_msg.k[0], 0, 0, 0, camera_info_msg.k[4], 0, camera_info_msg.k[2],
-                    camera_info_msg.k[5], 1
+                    camera_info_msg.K[0], 0, 0, 0, camera_info_msg.K[4], 0, camera_info_msg.K[2],
+                    camera_info_msg.K[5], 1
                 ]
             },
             outfile,
@@ -37,7 +37,7 @@ def save_camera_info_intrinsic_as_json(filename, camera_info_msg):
 
 
 def getIntrinsicsFromMsg(camera_info_msg):
-  return o3d.camera.PinholeCameraIntrinsic(camera_info_msg.width, camera_info_msg.height, camera_info_msg.k[0], camera_info_msg.k[4], camera_info_msg.k[2], camera_info_msg.k[5])
+  return o3d.camera.PinholeCameraIntrinsic(camera_info_msg.width, camera_info_msg.height, camera_info_msg.K[0], camera_info_msg.K[4], camera_info_msg.K[2], camera_info_msg.K[5])
 
 
 def transformStampedToVectors(gm_tf_stamped):
