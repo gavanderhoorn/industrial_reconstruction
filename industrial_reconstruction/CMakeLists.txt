@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(industrial_reconstruction)
 
-find_package(catkin REQUIRED)
+find_package(catkin REQUIRED COMPONENTS catkin_virtualenv)
 
 catkin_package()
+
+catkin_generate_virtualenv()
 
 catkin_python_setup()
 
