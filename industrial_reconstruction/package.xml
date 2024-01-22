@@ -21,7 +21,8 @@
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>industrial_reconstruction_msgs</exec_depend>
-  <exec_depend>python3-open3d-pip</exec_depend>
-  <exec_depend>python3-numpy</exec_depend>
 
+  <export>
+    <pip_requirements>requirements.txt</pip_requirements>
+  </export>
 </package>
